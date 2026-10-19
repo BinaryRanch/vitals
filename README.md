@@ -68,10 +68,13 @@ serves a canned snapshot at the same URL, which is how the screenshot above was
 made.
 
 ```bash
-git clone https://forge.binaryranch.com/sastian/vitals.git
+git clone https://github.com/BinaryRanch/vitals.git
 cd vitals
 python3 server.py            # http://127.0.0.1:8791
 ```
+
+Canonical development happens on [Binary Ranch's own forge](https://forge.binaryranch.com/binaryranch-labs/vitals);
+GitHub is the public mirror. Either clone works, commits land in both.
 
 Optional: run it as a user service so it is either up or reported, never a
 silently orphaned process.

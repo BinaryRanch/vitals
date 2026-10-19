@@ -1,6 +1,6 @@
 [Unit]
 Description=Vitals — workload and browser-tab monitor
-Documentation=https://forge.binaryranch.com/sastian/vitals
+Documentation=https://github.com/BinaryRanch/vitals
 After=graphical-session.target network.target
 PartOf=graphical-session.target
 
