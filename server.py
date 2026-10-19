@@ -602,6 +602,16 @@ class Sampler(threading.Thread):
 SAMPLER = Sampler()
 
 
+DEMO = {"data": None}
+
+
+def load_demo():
+    path = os.path.join(HERE, "demo", "demo-snapshot.json")
+    with open(path) as f:
+        DEMO["data"] = json.load(f)
+    return DEMO["data"]
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -626,12 +636,20 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 return self._send("index.html missing", "text/plain", 500)
         if u.path == "/api/snapshot":
+            if DEMO["data"]:
+                snap = dict(DEMO["data"]["snapshot"])
+                snap["t"] = time.time()
+                snap["demo"] = True
+                return self._send(json.dumps(snap))
             with SAMPLER.lock:
                 return self._send(json.dumps(SAMPLER.latest))
         if u.path == "/api/detail":
             key = parse_qs(u.query).get("key", [""])[0]
             if not key:
                 return self._send('{"error":"key required"}', code=400)
+            if DEMO["data"]:
+                return self._send(json.dumps(
+                    DEMO["data"]["details"].get(key, {"key": key, "processes": [], "series": []})))
             return self._send(json.dumps(SAMPLER.detail(key)))
         return self._send("not found", "text/plain", 404)
 
@@ -640,8 +658,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=int(os.environ.get("VITALS_PORT", 8791)))
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--demo", action="store_true",
+                    help="serve the canned demo snapshot (documentation, screenshots, UI work)")
     args = ap.parse_args()
-    SAMPLER.start()
+    if args.demo:
+        load_demo()
+        print("Vitals in DEMO mode — canned data, no /proc sampling, no CDP", flush=True)
+    else:
+        SAMPLER.start()
     time.sleep(1.2)
     try:
         srv = ThreadingHTTPServer((args.host, args.port), Handler)

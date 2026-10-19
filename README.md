@@ -63,6 +63,10 @@ the same row, always labeled:
 Requirements: Linux, Python 3.9+, a `/proc` filesystem. No dependencies, no
 root, no agent installed inside your apps.
 
+Want to see it without pointing it at your machine? `python3 server.py --demo`
+serves a canned snapshot at the same URL, which is how the screenshot above was
+made.
+
 ```bash
 git clone https://forge.binaryranch.com/sastian/vitals.git
 cd vitals
