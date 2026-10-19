@@ -1,0 +1,19 @@
+[Unit]
+Description=Vitals — workload and browser-tab monitor
+Documentation=https://forge.binaryranch.com/sastian/vitals
+After=graphical-session.target network.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/vitals
+ExecStart=/usr/bin/python3 %h/Projects/vitals/server.py --port 8791
+Restart=on-failure
+RestartSec=3
+# a monitor must never be the reason a machine is slow
+Nice=10
+CPUQuota=25%
+MemoryMax=256M
+
+[Install]
+WantedBy=default.target

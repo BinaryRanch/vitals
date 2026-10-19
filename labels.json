@@ -1,0 +1,14 @@
+{
+  "apps": {
+    "com.brave.Browser": "Brave",
+    "org.keepassxc.KeePassXC": "KeePassXC"
+  },
+  "units": {
+    "headroom-proxy.service": "Headroom proxy"
+  },
+  "containers": {},
+  "commands": {
+    "ollama": "Ollama",
+    "caddy": "Caddy"
+  }
+}

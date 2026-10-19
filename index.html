@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vitals — workload map</title>
+<style>
+:root{
+  --bg:#0d1013; --panel:#12161a; --panel2:#171c21; --line:#232a31;
+  --fg:#e6ebef; --dim:#8b98a5; --dim2:#5f6b76;
+  --hot:#e0603f; --warn:#d9a13b; --ok:#3f9e86; --cool:#4f8fb5;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 26px 60px}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:18px}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand b{font-size:16px;letter-spacing:.14em;font-weight:600}
+.brand span{color:var(--dim2);font-size:11px;letter-spacing:.04em}
+.meta{color:var(--dim2);font-size:11px;text-align:right}
+h2{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim2);
+   font-weight:500;margin:26px 0 8px}
+
+/* hero */
+.hero{display:flex;align-items:flex-end;gap:28px;flex-wrap:wrap}
+.stat b{font-size:34px;font-weight:650;letter-spacing:-.02em;line-height:1}
+.stat b small{font-size:15px;font-weight:500;color:var(--dim);letter-spacing:0}
+.stat i{display:block;font-style:normal;color:var(--dim2);font-size:10.5px;
+  letter-spacing:.08em;text-transform:uppercase;margin-top:5px}
+.machine{display:flex;height:34px;border-radius:5px;overflow:hidden;margin-top:16px;
+  border:1px solid var(--line);background:#0a0d10}
+.machine div{height:100%;transition:width .35s ease}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--dim)}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;vertical-align:0}
+
+/* flags */
+.flags{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.flag{font-size:11px;padding:3px 9px;border-radius:3px;border:1px solid var(--line);
+  background:var(--panel);color:var(--dim)}
+.flag.hot{border-color:#5c2f24;background:#241512;color:#f0a58c}
+.flag.warn{border-color:#5a4520;background:#221c10;color:#e8c88a}
+
+/* table */
+.tabhead,.row{display:grid;grid-template-columns:minmax(220px,1.5fr) 92px 74px 66px 62px 78px 74px 22px;
+  align-items:center;gap:10px;padding:0 10px}
+.tabhead{color:var(--dim2);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  border-bottom:1px solid var(--line);padding-bottom:7px;margin-bottom:2px}
+.tabhead div:nth-child(n+3){text-align:right}
+.tabhead div:nth-child(2){text-align:left}
+.rows{border-bottom:1px solid var(--line)}
+.row{padding:9px 10px;border-bottom:1px solid #1a2027;cursor:pointer;position:relative}
+.row:hover{background:var(--panel)}
+.row.open{background:var(--panel2)}
+.row .nm{display:flex;align-items:center;gap:9px;min-width:0}
+.row .nm .dot{width:9px;height:9px;border-radius:2px;flex:0 0 9px}
+.row .nm .txt{min-width:0}
+.row .nm .t1{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .nm .t2{color:var(--dim2);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .bar{height:8px;background:#1b2229;border-radius:2px;overflow:hidden}
+.row .bar i{display:block;height:100%;border-radius:2px}
+.num{text-align:right;color:var(--fg);font-size:12px}
+.num.dim{color:var(--dim)}
+.chev{color:var(--dim2);font-size:11px;text-align:right}
+.spark{width:92px;height:22px}
+.chip{font-size:9.5px;padding:1px 5px;border-radius:2px;margin-left:6px;
+  border:1px solid #5c2f24;background:#241512;color:#f0a58c;white-space:nowrap}
+
+/* detail */
+.detail{padding:6px 10px 16px 30px;background:var(--panel2);border-bottom:1px solid #1a2027}
+.dgrid{display:grid;grid-template-columns:1fr 300px;gap:22px}
+.dlist .ph{display:grid;grid-template-columns:1fr 88px 62px 58px 62px;gap:8px;
+  font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim2);
+  border-bottom:1px solid var(--line);padding-bottom:5px;margin-bottom:4px}
+.dlist .ph div:nth-child(n+2){text-align:right}
+.p{display:grid;grid-template-columns:1fr 88px 62px 58px 62px;gap:8px;padding:5px 0;
+  border-bottom:1px solid #1a2027;align-items:baseline}
+.p .r{color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.p .r b{color:var(--fg);font-weight:500}
+.p .r em{font-style:normal;color:var(--dim2);font-size:10px;margin-left:6px}
+.p .why{grid-column:1/-1;color:var(--dim2);font-size:10.5px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chart{border:1px solid var(--line);border-radius:4px;padding:8px;background:#0b0e11}
+.chart .cap{font-size:10px;color:var(--dim2);letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+.empty{color:var(--dim2);font-size:12px;padding:14px 0}
+.pt{display:grid;grid-template-columns:1fr 70px 66px;gap:8px;padding:5px 0;
+  border-bottom:1px solid #1a2027;align-items:baseline}
+.pt .r{color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt .r b{color:var(--fg);font-weight:500}
+.pt .r em{font-style:normal;color:var(--dim2);font-size:10px;margin-left:7px}
+.verdict{margin-top:8px;padding:7px 10px;border-left:2px solid var(--warn);
+  background:#1c1710;color:#d8bb84;font-size:11px;line-height:1.4}
+.banner{margin:16px 0 0;padding:11px 13px;border:1px solid #4a3d24;background:#191510;
+  border-radius:4px;font-size:11.5px;color:#c9b58c}
+.banner b{color:#e8c88a;font-weight:600}
+.banner code{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#e6ebef;
+  background:#0b0e11;padding:2px 5px;border-radius:2px;display:inline-block;margin-top:5px}
+.tabs .th,.tabs .tr{display:grid;grid-template-columns:1fr 120px 70px 64px;gap:10px;
+  padding:6px 10px;align-items:baseline}
+.tabs .th{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim2);
+  border-bottom:1px solid var(--line);padding-bottom:5px}
+.tabs .th div:nth-child(n+2){text-align:right}
+.tabs .tr{border-bottom:1px solid #1a2027}
+.tabs .tr .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tabs .tr .t em{font-style:normal;display:block;color:var(--dim2);font-size:10px;
+  font-family:ui-monospace,Menlo,monospace}
+.tabs .tr .b{color:var(--dim);font-size:11px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.controls{display:flex;gap:10px;align-items:center;margin:8px 0 0}
+input[type=search]{background:var(--panel);border:1px solid var(--line);color:var(--fg);
+  border-radius:3px;padding:5px 9px;font-size:12px;width:230px;outline:none}
+input[type=search]:focus{border-color:#37424d}
+button{background:var(--panel);border:1px solid var(--line);color:var(--dim);border-radius:3px;
+  padding:4px 9px;font-size:11px;cursor:pointer;font-family:inherit}
+button:hover{border-color:#37424d;color:var(--fg)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand"><b>VITALS</b><span id="hostlabel">workload map</span></div>
+  <div class="meta mono" id="meta">connecting…</div>
+</header>
+
+<div class="hero">
+  <div class="stat"><b id="busy">–</b><i>of machine busy</i></div>
+  <div class="stat"><b id="cores">–</b><i>cores in use</i></div>
+  <div class="stat"><b id="topname" style="font-size:22px">–</b><i>largest workload</i></div>
+</div>
+
+<div class="machine" id="machine"></div>
+<div class="legend" id="legend"></div>
+<div class="flags" id="flags"></div>
+
+<h2>Workloads</h2>
+<div class="controls">
+  <input type="search" id="q" placeholder="filter workloads…">
+  <button id="sortbtn">sorted by CPU</button>
+  <button id="idlebtn">show idle</button>
+</div>
+
+<div style="margin-top:14px">
+  <div class="tabhead">
+    <div>workload</div><div></div><div>% machine</div><div>cores</div>
+    <div>RAM</div><div>age</div><div>trend</div><div></div>
+  </div>
+  <div class="rows" id="rows"></div>
+</div>
+
+<h2>Browser tabs</h2>
+<div id="banner"></div>
+<div class="tabs">
+  <div class="th"><div>tab</div><div>browser</div><div>page work</div><div>heap</div></div>
+  <div id="tabs"></div>
+</div>
+
+<div style="margin-top:14px;color:var(--dim2);font-size:10.5px">
+  % machine = share of all cores (matches GNOME System Monitor). cores = same load as top/ps report it.
+  Page work = main-thread task time inside that tab, from the browser's own CDP counters.
+  Trend = last 5 minutes. This monitor costs <span class="mono" id="selfcost">–</span>.
+</div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const PALETTE = ["#e0603f","#4f8fb5","#3f9e86","#c98a2e","#8a6fb0","#b4652a",
+                 "#5a8f3f","#b03a48","#3f7f9e","#9e7f3f","#6f7f8f","#8f3f6f"];
+const colorCache = {};
+function colorFor(key){
+  if(colorCache[key]) return colorCache[key];
+  let h=0; for(const c of key) h=(h*31+c.charCodeAt(0))>>>0;
+  return colorCache[key]=PALETTE[h%PALETTE.length];
+}
+const state = {snap:null, open:new Set(), details:{}, sort:"cpu", hideIdle:true, q:""};
+
+function fmtAge(h){
+  if(h<1) return Math.round(h*60)+"m";
+  if(h<48) return h.toFixed(1)+"h";
+  return (h/24).toFixed(1)+"d";
+}
+function spark(series, color){
+  const w=92,h=22;
+  if(!series||series.length<2) return `<svg class="spark" viewBox="0 0 ${w} ${h}"></svg>`;
+  const max=Math.max(...series,0.1);
+  const pts=series.map((v,i)=>[i/(series.length-1)*w, h-2-(v/max)*(h-4)]);
+  const d=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+}
+function flagChips(w){
+  return (w.flags||[]).map(f=>`<span class="chip">${f}</span>`).join("");
+}
+
+function render(){
+  const s=state.snap; if(!s) return;
+  const cores=s.cores;
+  $("#meta").textContent = `sampled ${new Date(s.t*1000).toLocaleTimeString()} · ${s.sample_ms}ms per sample`;
+  if(s.host) $("#hostlabel").textContent = "workload map · " + s.host;
+  $("#busy").innerHTML = `${s.total_pct}<small>%</small>`;
+  $("#cores").innerHTML = `${s.total_busy.toFixed(2)}<small> / ${cores}</small>`;
+  const top=s.workloads[0];
+  $("#topname").textContent = top? top.name : "—";
+  $("#topname").parentElement.querySelector("i").textContent =
+    top ? `largest workload · ${top.cpu.toFixed(2)} cores` : "largest workload";
+  $("#selfcost").textContent = `${s.self_cost.toFixed(2)} cores`;
+
+  // machine bar: top 8 workloads + rest, then free
+  const top8=s.workloads.slice(0,8);
+  const used=top8.reduce((a,w)=>a+w.cpu,0);
+  const rest=Math.max(0, s.total_busy-used);
+  let bar="", leg="";
+  top8.forEach(w=>{
+    bar+=`<div style="width:${(w.cpu/cores*100).toFixed(2)}%;background:${colorFor(w.key)}"></div>`;
+    leg+=`<span><i style="background:${colorFor(w.key)}"></i>${w.name} ${w.cpu.toFixed(2)}</span>`;
+  });
+  if(rest>0.02){
+    bar+=`<div style="width:${(rest/cores*100).toFixed(2)}%;background:#3a434c"></div>`;
+    leg+=`<span><i style="background:#3a434c"></i>rest ${rest.toFixed(2)}</span>`;
+  }
+  $("#machine").innerHTML=bar; $("#legend").innerHTML=leg;
+
+  $("#flags").innerHTML = (s.flags||[]).map(f=>{
+    const cls = f.flag==="leaked" ? "hot" : "warn";
+    return `<span class="flag ${cls}">${f.name}: ${f.flag}${f.flag==="leaked"?` · ${f.cpu.toFixed(2)} cores`:""}</span>`;
+  }).join("");
+
+  // browser tabs
+  const tabRows = (s.tabs||[]).map(t=>{
+    const meta = [shortUrl(t.url)];
+    if(t.port) meta.push("port "+t.port);
+    if(t.proc_cores) meta.push(t.proc_cores+" cores in this browser");
+    if(t.instance_age) meta.push(fmtAge(t.instance_age)+" old");
+    return `<div class="tr">
+      <div class="t">${esc(t.title)}<em>${esc(meta.join("  ·  "))}</em></div>
+      <div class="b">${t.port ? "instance "+t.port : esc(t.browser)}</div>
+      <div class="num mono">${t.task_pct.toFixed(1)}%</div>
+      <div class="num dim">${t.heap_mb} MB</div>
+    </div>`;}).join("");
+  $("#tabs").innerHTML = tabRows || `<div class="empty">no tab data yet</div>`;
+  const brave = (s.workloads||[]).find(w=>/brave/i.test(w.name) && w.cpu > 0.05);
+  $("#banner").innerHTML =
+    (!s.brave_cdp && brave) ? `<div class="banner">
+      <b>Brave is not speaking CDP, so its tabs are invisible.</b> Restart it once with the debug port and
+      every tab shows up here with its own page-work number, title, and URL. Tabs restore from session.
+      <br><code>flatpak kill com.brave.Browser && flatpak run com.brave.Browser --remote-debugging-port=9222</code>
+    </div>` : "";
+
+  // rows
+  let list=s.workloads.slice();
+  if(state.hideIdle) list=list.filter(w=>w.cpu>=0.05);
+  if(state.q) list=list.filter(w=>(w.name+" "+w.key).toLowerCase().includes(state.q.toLowerCase()));
+  const by=state.sort;
+  list.sort((a,b)=> by==="cpu"? b.cpu-a.cpu : by==="ram"? b.rss_mb-a.rss_mb : b.age_h-a.age_h);
+  const maxCpu=Math.max(0.2,...list.map(w=>w.cpu));
+
+  let html="";
+  list.forEach(w=>{
+    const c=colorFor(w.key);
+    const open=state.open.has(w.key);
+    const d=state.details[w.key];
+    html+=`<div class="row ${open?"open":""}" data-key="${w.key}">
+      <div class="nm"><span class="dot" style="background:${c}"></span>
+        <div class="txt"><div class="t1">${w.name}${flagChips(w)}</div>
+        <div class="t2">${meta2(w)}</div></div></div>
+      <div class="bar"><i style="width:${(w.cpu/maxCpu*100).toFixed(1)}%;background:${c}"></i></div>
+      <div class="num">${w.pct.toFixed(1)}%</div>
+      <div class="num mono">${w.cpu.toFixed(2)}</div>
+      <div class="num dim">${fmtRam(w.rss_mb)}</div>
+      <div class="num dim">${fmtAge(w.age_h)}</div>
+      <div>${spark(w.series || (d&&d.series), c)}</div>
+      <div class="chev">${open?"▲":"▼"}</div>
+    </div>`;
+    if(open){
+      html+=`<div class="detail" data-detail="${w.key}">${detailHTML(w,d)}</div>`;
+    }
+  });
+  $("#rows").innerHTML = html || `<div class="empty">nothing matches</div>`;
+
+  document.querySelectorAll(".row").forEach(el=>{
+    el.onclick=()=>{
+      const k=el.dataset.key;
+      if(state.open.has(k)){ state.open.delete(k); }
+      else { state.open.add(k); loadDetail(k); }
+      render();
+    };
+  });
+}
+
+function meta2(w){
+  const parts=[];
+  if(w.roles){ const top=Object.entries(w.roles).sort((a,b)=>b[1]-a[1]).slice(0,3)
+      .map(([r,v])=>`${r} ${v.toFixed(2)}`).join(" · ");
+    if(top) parts.push(top); }
+  if(w.instances>1) parts.push(`${w.instances} instances`);
+  parts.push(`${w.procs} procs`);
+  return parts.join(" · ");
+}
+function fmtRam(mb){ return mb>=1024 ? (mb/1024).toFixed(2)+" GB" : mb+" MB"; }
+
+function detailHTML(w,d){
+  if(!d) return `<div class="empty">loading…</div>`;
+  const tabBlock = (w.tabs&&w.tabs.length) ? `
+    <div style="margin-bottom:14px">
+      <div class="ph" style="grid-template-columns:1fr 70px 66px;"><div>tab</div><div>page work</div><div>heap</div></div>
+      ${w.tabs.map(t=>`<div class="pt">
+        <div class="r"><b>${esc(t.title)}</b><em>${esc(shortUrl(t.url))}</em></div>
+        <div class="num mono">${t.task_pct.toFixed(1)}%</div>
+        <div class="num dim">${t.heap_mb} MB</div></div>`).join("")}
+      ${w.verdict?`<div class="verdict">${esc(w.verdict)}</div>`:""}
+    </div>` : "";
+  if(!d.processes.length) return tabBlock+`<div class="empty">no processes seen in this sample</div>`;
+  const rows=d.processes.map(p=>{
+    const why=[];
+    if(p.windows.length) why.push("window: "+p.windows[0]);
+    if(p.ports.length) why.push("ports "+p.ports.join(","));
+    const cg=p.cgroup? p.cgroup.split("/").slice(-1)[0] : "";
+    if(cg) why.push(cg);
+    return `<div class="p">
+      <div class="r"><b>${p.role}</b><em>pid ${p.pid} · ${p.rss_mb} MB</em></div>
+      <div class="num mono">${(p.cpu||0).toFixed(2)}</div>
+      <div class="num dim">${fmtAge((p.age_h||0))}</div>
+      <div class="num dim">${(p.threads&&p.threads[0])?p.threads[0].name.slice(0,10):"—"}</div>
+      <div class="num dim">${p.threads&&p.threads[0]?p.threads[0].ticks>0?Math.round(p.threads[0].ticks/100)+"s":"":"—"}</div>
+      <div class="why">${esc(why.join("  ·  "))}</div>
+    </div>`;
+  }).join("");
+  return tabBlock+`<div class="dgrid"><div class="dlist">
+      <div class="ph"><div>process / role</div><div>cores</div><div>age</div><div>hot thread</div><div>cpu</div></div>
+      ${rows}</div>
+    <div class="chart"><div class="cap">last 5 minutes · cores</div>
+      ${bigChart(d.series, colorFor(w.key))}</div></div>`;
+}
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function shortUrl(u){
+  try{ const x=new URL(u); return x.hostname.replace(/^www\./,"")+x.pathname.slice(0,40); }
+  catch(e){ return (u||"").slice(0,50); }
+}
+function bigChart(series,color){
+  const w=284,h=120;
+  if(!series||series.length<2) return `<div class="empty">collecting…</div>`;
+  const max=Math.max(...series,0.2);
+  const pts=series.map((v,i)=>[i/(series.length-1)*w, h-4-(v/max)*(h-12)]);
+  const d=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
+  const area=`${d} L${w} ${h} L0 ${h} Z`;
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px">
+    <path d="${area}" fill="${color}22" stroke="none"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.5"/>
+    <text x="2" y="10" fill="#5f6b76" font-size="9">${max.toFixed(2)}</text>
+    <text x="2" y="${h-2}" fill="#5f6b76" font-size="9">0</text>
+  </svg>`;
+}
+
+async function loadDetail(key){
+  try{
+    const r=await fetch("/api/detail?key="+encodeURIComponent(key));
+    const d=await r.json();
+    state.details[key]=d;
+    render();
+  }catch(e){}
+}
+async function tick(){
+  try{
+    const r=await fetch("/api/snapshot");
+    state.snap=await r.json();
+    // top up series for expanded rows
+    for(const k of state.open) if(state.details[k]) loadDetail(k);
+    render();
+  }catch(e){ $("#meta").textContent="server unreachable"; }
+}
+$("#q").oninput=e=>{state.q=e.target.value;render();};
+$("#sortbtn").onclick=e=>{
+  state.sort = state.sort==="cpu"?"ram":"cpu";
+  e.target.textContent = state.sort==="cpu"?"sorted by CPU":"sorted by RAM";
+  render();
+};
+$("#idlebtn").onclick=e=>{
+  state.hideIdle=!state.hideIdle;
+  e.target.textContent = state.hideIdle?"show idle":"hide idle";
+  render();
+};
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>
