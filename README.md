@@ -150,6 +150,13 @@ coarse by design.
 - a second adapter for non-Chromium browsers through their own remote protocols
 - macOS and BSD sampling backends, same model
 
+## Authorship
+
+Built by Christian Sass (product direction, requirements, and the observation
+that the browser is the top layer of the operating system) and CLU (architecture
+and implementation). Details in [AUTHORS.md](AUTHORS.md). Commits carry a
+`Co-developed-with` trailer.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
