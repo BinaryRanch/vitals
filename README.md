@@ -85,6 +85,44 @@ silently orphaned process.
 
 Options: `--port N`, `--host ADDR`, `VITALS_PORT` env var.
 
+### The bookmark
+
+`install.sh` also puts Vitals in your browser's bookmark bar, as a bookmark and
+as a popup bookmarklet that opens it in its own window. A tool you have to
+remember the URL of does not get used.
+
+Chromium keeps the bookmark model in memory and rewrites the file on its next
+save, so the browser has to be closed while that write happens. If it is running,
+install prints the one command to run afterwards instead of failing:
+
+```bash
+python3 bookmark.py --install            # add bookmark + popup
+python3 bookmark.py --install --wait 600 # wait for the browser to exit
+python3 bookmark.py --status             # is it there, is the file sane
+python3 bookmark.py --remove             # take them back out
+```
+
+The tool recomputes Chromium's bookmark checksum (MD5 over a canonical
+serialisation of every node) and verifies it after writing, because a file that
+fails that check leaves the browser showing an empty bar while the file on disk
+still looks perfect. It keeps a timestamped backup of the file it edited.
+
+## Live updates
+
+The sampler runs every 2 seconds, because one sample costs about 400 ms of CPU
+and a monitor that eats the machine is the joke writing itself. The page polls
+faster than that and eases between frames, so the numbers move continuously
+instead of snapping twice a second:
+
+- header values are tabular-width and tweened toward the newest sample
+- machine-bar segments are keyed and reordered with flex `order`, so their
+  widths actually animate instead of being recreated mid-transition
+- rows are keyed DOM nodes updated in place, sorted on a 0.1-core grid with the
+  previous order as tiebreak, so a row does not jump position over a hundredth
+  of a core
+- a row appears at 0.05 cores but only leaves after it stays under 0.02, so
+  nothing flickers in and out at the threshold
+
 ## Getting browser tabs
 
 Tabs come from the DevTools Protocol, which a browser only exposes if it was

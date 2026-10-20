@@ -115,6 +115,19 @@ input[type=search]:focus{border-color:#37424d}
 button{background:var(--panel);border:1px solid var(--line);color:var(--dim);border-radius:3px;
   padding:4px 9px;font-size:11px;cursor:pointer;font-family:inherit}
 button:hover{border-color:#37424d;color:var(--fg)}
+
+/* --- live-update stability: nothing moves unless its own value moved --- */
+.stat b{font-variant-numeric:tabular-nums}
+.stat .v{display:inline-block;text-align:right}
+.stat.busy .v{min-width:2.2ch}
+.stat.cores .v{min-width:4.4ch}
+.machine div{transition:width .9s linear}
+.legend span{white-space:nowrap;font-variant-numeric:tabular-nums}
+.legend span em{font-style:normal;display:inline-block;min-width:3.1em;text-align:right}
+.rows{display:flex;flex-direction:column}
+.row .bar i{transition:width .9s linear}
+.num{font-variant-numeric:tabular-nums}
+.stat, .legend span, .tabs .tr{will-change:auto}
 </style>
 </head>
 <body>
@@ -126,9 +139,9 @@ button:hover{border-color:#37424d;color:var(--fg)}
 </header>
 
 <div class="hero">
-  <div class="stat"><b id="busy">–</b><i>of machine busy</i></div>
-  <div class="stat"><b id="cores">–</b><i>cores in use</i></div>
-  <div class="stat"><b id="topname" style="font-size:22px">–</b><i>largest workload</i></div>
+  <div class="stat busy"><b id="busy"><span class="v">–</span><small>%</small></b><i>of machine busy</i></div>
+  <div class="stat cores"><b id="cores"><span class="v">–</span><small id="coresmax"> / –</small></b><i>cores in use</i></div>
+  <div class="stat"><b id="topname" style="font-size:22px">–</b><i id="topsub">largest workload</i></div>
 </div>
 
 <div class="machine" id="machine"></div>
@@ -174,21 +187,50 @@ function colorFor(key){
   let h=0; for(const c of key) h=(h*31+c.charCodeAt(0))>>>0;
   return colorCache[key]=PALETTE[h%PALETTE.length];
 }
-const state = {snap:null, open:new Set(), details:{}, sort:"cpu", hideIdle:true, q:""};
+const state = {snap:null, open:new Set(), details:{}, sort:"cpu", hideIdle:true, q:"",
+               rows:new Map(), dets:new Map(), segs:new Map(), leg:new Map(),
+               rank:new Map(), low:new Map(), lastT:0, lastTabs:"", lastBanner:""};
+const ease = {busy:0, busyT:0, cores:0, coresT:0};
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const elBusy = $("#busy .v"), elCores = $("#cores .v");
+
+/* write only when the value actually changed */
+function setText(el,txt){ if(el && el.__t!==txt){ el.textContent=txt; el.__t=txt; } }
+function setHTML(el,html){ if(el && el.__h!==html){ el.innerHTML=html; el.__h=html; } }
+function setW(el,pct){ const v=pct.toFixed(2)+"%"; if(el && el.__w!==v){ el.style.width=v; el.__w=v; } }
+function keyed(parent,map,key,tag,cls){
+  let el=map.get(key);
+  if(!el){ el=document.createElement(tag); if(cls) el.className=cls; parent.appendChild(el); map.set(key,el); }
+  return el;
+}
+function prune(map,keep){ for(const [k,el] of map){ if(!keep.has(k)){ el.remove(); map.delete(k); } } }
+
+/* one rAF loop eases the hero numbers toward the newest sample instead of snapping */
+function loop(){
+  const step=(cur,tgt)=> {
+    const d=tgt-cur;
+    if(REDUCED || Math.abs(d)<0.02) return tgt;
+    return cur + d*0.16;
+  };
+  ease.busy = step(ease.busy, ease.busyT);
+  ease.cores = step(ease.cores, ease.coresT);
+  setText(elBusy, String(Math.round(ease.busy)));
+  setText(elCores, ease.cores.toFixed(2));
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
 
 function fmtAge(h){
   if(h<1) return Math.round(h*60)+"m";
   if(h<48) return h.toFixed(1)+"h";
   return (h/24).toFixed(1)+"d";
 }
-function spark(series, color){
+function sparkPath(series){
   const w=92,h=22;
-  if(!series||series.length<2) return `<svg class="spark" viewBox="0 0 ${w} ${h}"></svg>`;
+  if(!series||series.length<2) return "";
   const max=Math.max(...series,0.1);
-  const pts=series.map((v,i)=>[i/(series.length-1)*w, h-2-(v/max)*(h-4)]);
-  const d=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
-    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+  return series.map((v,i)=>(i?"L":"M")+(i/(series.length-1)*w).toFixed(1)+" "+
+    (h-2-(v/max)*(h-4)).toFixed(1)).join(" ");
 }
 function flagChips(w){
   return (w.flags||[]).map(f=>`<span class="chip">${f}</span>`).join("");
@@ -197,96 +239,186 @@ function flagChips(w){
 function render(){
   const s=state.snap; if(!s) return;
   const cores=s.cores;
-  $("#meta").textContent = `sampled ${new Date(s.t*1000).toLocaleTimeString()} · ${s.sample_ms}ms per sample`;
-  if(s.host) $("#hostlabel").textContent = "workload map · " + s.host;
-  $("#busy").innerHTML = `${s.total_pct}<small>%</small>`;
-  $("#cores").innerHTML = `${s.total_busy.toFixed(2)}<small> / ${cores}</small>`;
+  setText($("#meta"), `live · ${new Date(s.t*1000).toLocaleTimeString()} · ${s.sample_ms}ms sample`);
+  if(s.host) setText($("#hostlabel"), "workload map · " + s.host);
+  ease.busyT = s.total_pct; ease.coresT = s.total_busy;
+  setText($("#coresmax"), " / " + cores);
   const top=s.workloads[0];
-  $("#topname").textContent = top? top.name : "—";
-  $("#topname").parentElement.querySelector("i").textContent =
-    top ? `largest workload · ${top.cpu.toFixed(2)} cores` : "largest workload";
-  $("#selfcost").textContent = `${s.self_cost.toFixed(2)} cores`;
+  setText($("#topname"), top? top.name : "—");
+  setText($("#topsub"), top ? `largest workload · ${top.cpu.toFixed(2)} cores` : "largest workload");
+  setText($("#selfcost"), `${s.self_cost.toFixed(2)} cores`);
 
-  // machine bar: top 8 workloads + rest, then free
+  // machine bar: top 8 workloads + rest. Segments are keyed and reordered by
+  // flex order, so widths actually animate instead of being recreated each tick.
   const top8=s.workloads.slice(0,8);
   const used=top8.reduce((a,w)=>a+w.cpu,0);
   const rest=Math.max(0, s.total_busy-used);
-  let bar="", leg="";
-  top8.forEach(w=>{
-    bar+=`<div style="width:${(w.cpu/cores*100).toFixed(2)}%;background:${colorFor(w.key)}"></div>`;
-    leg+=`<span><i style="background:${colorFor(w.key)}"></i>${w.name} ${w.cpu.toFixed(2)}</span>`;
+  const segs=[];
+  top8.forEach((w,i)=>segs.push({key:w.key,name:w.name,cpu:w.cpu,color:colorFor(w.key)}));
+  if(rest>0.02) segs.push({key:"__rest",name:"rest",cpu:rest,color:"#3a434c"});
+  const keepSeg=new Set();
+  segs.forEach((sg,i)=>{
+    keepSeg.add(sg.key);
+    const el=keyed($("#machine"),state.segs,sg.key,"div");
+    setW(el, Math.min(100, sg.cpu/cores*100));
+    if(el.__bg!==sg.color){ el.style.background=sg.color; el.__bg=sg.color; }
+    el.style.order=i;
+    const lg=keyed($("#legend"),state.leg,sg.key,"span");
+    lg.style.order=i;
+    const sig=sg.name+"|"+sg.cpu.toFixed(2)+"|"+sg.color;
+    if(lg.__s!==sig){
+      lg.innerHTML=`<i style="background:${sg.color}"></i>${esc(sg.name)} <em>${sg.cpu.toFixed(2)}</em>`;
+      lg.__s=sig;
+    }
   });
-  if(rest>0.02){
-    bar+=`<div style="width:${(rest/cores*100).toFixed(2)}%;background:#3a434c"></div>`;
-    leg+=`<span><i style="background:#3a434c"></i>rest ${rest.toFixed(2)}</span>`;
-  }
-  $("#machine").innerHTML=bar; $("#legend").innerHTML=leg;
+  prune(state.segs,keepSeg); prune(state.leg,keepSeg);
 
-  $("#flags").innerHTML = (s.flags||[]).map(f=>{
+  setHTML($("#flags"), (s.flags||[]).map(f=>{
     const cls = f.flag==="leaked" ? "hot" : "warn";
     return `<span class="flag ${cls}">${f.name}: ${f.flag}${f.flag==="leaked"?` · ${f.cpu.toFixed(2)} cores`:""}</span>`;
-  }).join("");
+  }).join(""));
+  $("#flags").style.display = (s.flags||[]).length ? "flex" : "none";
 
-  // browser tabs
-  const tabRows = (s.tabs||[]).map(t=>{
-    const meta = [shortUrl(t.url)];
-    if(t.port) meta.push("port "+t.port);
-    if(t.proc_cores) meta.push(t.proc_cores+" cores in this browser");
-    if(t.instance_age) meta.push(fmtAge(t.instance_age)+" old");
-    return `<div class="tr">
-      <div class="t">${esc(t.title)}<em>${esc(meta.join("  ·  "))}</em></div>
-      <div class="b">${t.port ? "instance "+t.port : esc(t.browser)}</div>
-      <div class="num mono">${t.task_pct.toFixed(1)}%</div>
-      <div class="num dim">${t.heap_mb} MB</div>
-    </div>`;}).join("");
-  $("#tabs").innerHTML = tabRows || `<div class="empty">no tab data yet</div>`;
+  // browser tabs: rebuilt only when the tab data itself changes
+  const tabSig=JSON.stringify(s.tabs||[]);
+  if(state.lastTabs!==tabSig){
+    state.lastTabs=tabSig;
+    const tabRows = (s.tabs||[]).map(t=>{
+      const meta = [shortUrl(t.url)];
+      if(t.port) meta.push("port "+t.port);
+      if(t.proc_cores) meta.push(t.proc_cores+" cores in this browser");
+      if(t.instance_age) meta.push(fmtAge(t.instance_age)+" old");
+      return `<div class="tr">
+        <div class="t">${esc(t.title)}<em>${esc(meta.join("  ·  "))}</em></div>
+        <div class="b">${t.port ? "instance "+t.port : esc(t.browser)}</div>
+        <div class="num mono">${t.task_pct.toFixed(1)}%</div>
+        <div class="num dim">${t.heap_mb} MB</div>
+      </div>`;}).join("");
+    $("#tabs").innerHTML = tabRows || `<div class="empty">no tab data yet</div>`;
+  }
   const brave = (s.workloads||[]).find(w=>/brave/i.test(w.name) && w.cpu > 0.05);
-  $("#banner").innerHTML =
-    (!s.brave_cdp && brave) ? `<div class="banner">
+  const banner = (!s.brave_cdp && brave) ? `<div class="banner">
       <b>Brave is not speaking CDP, so its tabs are invisible.</b> Restart it once with the debug port and
       every tab shows up here with its own page-work number, title, and URL. Tabs restore from session.
       <br><code>flatpak kill com.brave.Browser && flatpak run com.brave.Browser --remote-debugging-port=9222</code>
     </div>` : "";
+  if(state.lastBanner!==banner){ state.lastBanner=banner; $("#banner").innerHTML=banner; }
 
-  // rows
+  // rows: keyed DOM, hysteresis on appearance, quantised sort so rows do not
+  // swap places over a hundredth of a core
   let list=s.workloads.slice();
-  if(state.hideIdle) list=list.filter(w=>w.cpu>=0.05);
-  if(state.q) list=list.filter(w=>(w.name+" "+w.key).toLowerCase().includes(state.q.toLowerCase()));
-  const by=state.sort;
-  list.sort((a,b)=> by==="cpu"? b.cpu-a.cpu : by==="ram"? b.rss_mb-a.rss_mb : b.age_h-a.age_h);
-  const maxCpu=Math.max(0.2,...list.map(w=>w.cpu));
+  const q=state.q.toLowerCase();
+  if(q) list=list.filter(w=>(w.name+" "+w.key).toLowerCase().includes(q));
 
-  let html="";
-  list.forEach(w=>{
-    const c=colorFor(w.key);
-    const open=state.open.has(w.key);
-    const d=state.details[w.key];
-    html+=`<div class="row ${open?"open":""}" data-key="${w.key}">
-      <div class="nm"><span class="dot" style="background:${c}"></span>
-        <div class="txt"><div class="t1">${w.name}${flagChips(w)}</div>
-        <div class="t2">${meta2(w)}</div></div></div>
-      <div class="bar"><i style="width:${(w.cpu/maxCpu*100).toFixed(1)}%;background:${c}"></i></div>
-      <div class="num">${w.pct.toFixed(1)}%</div>
-      <div class="num mono">${w.cpu.toFixed(2)}</div>
-      <div class="num dim">${fmtRam(w.rss_mb)}</div>
-      <div class="num dim">${fmtAge(w.age_h)}</div>
-      <div>${spark(w.series || (d&&d.series), c)}</div>
-      <div class="chev">${open?"▲":"▼"}</div>
-    </div>`;
-    if(open){
-      html+=`<div class="detail" data-detail="${w.key}">${detailHTML(w,d)}</div>`;
+  const visible=[];
+  for(const w of list){
+    if(!state.hideIdle){ state.low.delete(w.key); visible.push(w); continue; }
+    if(w.cpu>=0.05){ state.low.delete(w.key); visible.push(w); continue; }
+    // already on screen and still above 0.02: keep it for two more samples
+    const n=(state.low.get(w.key)||0);
+    if(state.rows.has(w.key) && w.cpu>=0.02 && n<2){ state.low.set(w.key,n+1); visible.push(w); }
+  }
+
+  const by=state.sort;
+  const qz=x=>Math.round(x*10)/10;
+  const prevRank=state.rank;
+  visible.sort((a,b)=>{
+    let d;
+    if(by==="cpu") d=qz(b.cpu)-qz(a.cpu);
+    else if(by==="ram") d=qz(b.rss_mb/100)-qz(a.rss_mb/100);
+    else d=qz(b.age_h*10)-qz(a.age_h*10);
+    if(Math.abs(d)>0.0001) return d;
+    return (prevRank.get(a.key)??1e9)-(prevRank.get(b.key)??1e9);
+  });
+  state.rank=new Map(visible.map((w,i)=>[w.key,i]));
+
+  const maxCpu=Math.max(0.2,...visible.map(w=>w.cpu));
+  const host=$("#rows");
+  const keepRows=new Set();
+
+  visible.forEach((w,i)=>{
+    keepRows.add(w.key);
+    let el=state.rows.get(w.key);
+    if(!el){ el=buildRow(w.key); host.appendChild(el); state.rows.set(w.key,el); }
+    el.style.order = i*2;
+    updateRow(el,w,maxCpu);
+    if(state.open.has(w.key)){
+      let det=state.dets.get(w.key);
+      if(!det){ det=document.createElement("div"); det.className="detail";
+                det.dataset.detail=w.key; host.appendChild(det); state.dets.set(w.key,det); }
+      det.style.order = i*2+1;
+      updateDetail(det,w,state.details[w.key]);
     }
   });
-  $("#rows").innerHTML = html || `<div class="empty">nothing matches</div>`;
 
-  document.querySelectorAll(".row").forEach(el=>{
-    el.onclick=()=>{
-      const k=el.dataset.key;
-      if(state.open.has(k)){ state.open.delete(k); }
-      else { state.open.add(k); loadDetail(k); }
-      render();
-    };
-  });
+  for(const [k,el] of state.rows){
+    if(!keepRows.has(k)){ el.remove(); state.rows.delete(k); state.rank.delete(k); }
+  }
+  for(const [k,el] of state.dets){
+    if(!keepRows.has(k) || !state.open.has(k)){ el.remove(); state.dets.delete(k); }
+  }
+  let empty=host.querySelector(".empty");
+  if(!visible.length){
+    if(!empty){ empty=document.createElement("div"); empty.className="empty"; host.appendChild(empty); }
+    empty.textContent = q ? "nothing matches" : "nothing above the idle line";
+  } else if(empty){ empty.remove(); }
+}
+
+function buildRow(key){
+  const el=document.createElement("div");
+  el.className="row"; el.dataset.key=key;
+  el.innerHTML=`<div class="nm"><span class="dot"></span>
+      <div class="txt"><div class="t1"></div><div class="t2"></div></div></div>
+    <div class="bar"><i></i></div>
+    <div class="num pct"></div>
+    <div class="num mono ccores"></div>
+    <div class="num dim ram"></div>
+    <div class="num dim age"></div>
+    <div class="sp"><svg class="spark" viewBox="0 0 92 22" preserveAspectRatio="none">
+      <path fill="none" stroke="#666" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
+    <div class="chev">▼</div>`;
+  el.onclick=()=>{
+    const k=el.dataset.key;
+    if(state.open.has(k)) state.open.delete(k);
+    else { state.open.add(k); loadDetail(k); }
+    render();
+  };
+  return el;
+}
+
+function updateRow(el,w,maxCpu){
+  const c=colorFor(w.key);
+  const dot=el.querySelector(".dot");
+  if(dot.__c!==c){ dot.style.background=c; dot.__c=c; }
+  const t1=el.querySelector(".t1");
+  const sig=w.name+"|"+(w.flags||[]).join(",");
+  if(t1.__s!==sig){ t1.innerHTML=esc(w.name)+flagChips(w); t1.__s=sig; }
+  setText(el.querySelector(".t2"), meta2(w));
+  const bar=el.querySelector(".bar i");
+  if(bar.__c!==c){ bar.style.background=c; bar.__c=c; }
+  setW(bar, Math.max(0,Math.min(100, w.cpu/maxCpu*100)));
+  setText(el.querySelector(".pct"), w.pct.toFixed(1)+"%");
+  setText(el.querySelector(".ccores"), w.cpu.toFixed(2));
+  setText(el.querySelector(".ram"), fmtRam(w.rss_mb));
+  setText(el.querySelector(".age"), fmtAge(w.age_h));
+  const d=state.details[w.key];
+  const path=el.querySelector(".sp path");
+  const pd=sparkPath(w.series || (d && d.series));
+  if(path.__d!==pd){ path.setAttribute("d", pd); path.__d=pd; }
+  if(path.__c!==c){ path.setAttribute("stroke", c); path.__c=c; }
+  const open=state.open.has(w.key);
+  if(el.__open!==open){
+    el.classList.toggle("open", open);
+    el.querySelector(".chev").textContent = open ? "▲" : "▼";
+    el.__open=open;
+  }
+}
+
+function updateDetail(det,w,d){
+  const sig=(d? JSON.stringify(d) : "pending")+w.name;
+  if(det.__s===sig) return;
+  det.__s=sig;
+  det.innerHTML=detailHTML(w,d);
 }
 
 function meta2(w){
@@ -363,12 +495,17 @@ async function loadDetail(key){
 }
 async function tick(){
   try{
-    const r=await fetch("/api/snapshot");
-    state.snap=await r.json();
-    // top up series for expanded rows
-    for(const k of state.open) if(state.details[k]) loadDetail(k);
+    const r=await fetch("/api/snapshot",{cache:"no-store"});
+    const s=await r.json();
+    // The sampler produces a frame every 2s. Poll faster than that so a new
+    // frame is picked up within ~0.7s, and ignore repeats so the DOM is never
+    // rewritten with numbers the user already sees.
+    if(s.t===state.lastT) return;
+    state.lastT=s.t;
+    state.snap=s;
     render();
-  }catch(e){ $("#meta").textContent="server unreachable"; }
+    for(const k of state.open) if(state.details[k]) loadDetail(k);
+  }catch(e){ setText($("#meta"),"server unreachable"); }
 }
 $("#q").oninput=e=>{state.q=e.target.value;render();};
 $("#sortbtn").onclick=e=>{
@@ -381,7 +518,8 @@ $("#idlebtn").onclick=e=>{
   e.target.textContent = state.hideIdle?"show idle":"hide idle";
   render();
 };
-tick(); setInterval(tick, 2000);
+tick();
+setInterval(tick, 700);
 </script>
 </body>
 </html>

@@ -25,3 +25,18 @@ else
   echo "Vitals failed to start. Check: journalctl --user -u vitals -n 40"
   exit 1
 fi
+
+# --- bookmark bar -------------------------------------------------------
+# A tool you have to remember the URL of does not get used. Put it behind the
+# bar, where a bookmark belongs. The browser must be closed while we write,
+# because Chromium keeps the bookmark model in memory and overwrites the file
+# on its next save. Running install.sh while the browser is up is not a
+# failure: it prints the one command to run afterwards.
+if [ "${1:-}" = "--no-bookmark" ]; then
+  echo
+  echo "Bookmark skipped. Add it later with:"
+  echo "  python3 $HERE/bookmark.py --install"
+else
+  echo
+  python3 "$HERE/bookmark.py" --install ${VITALS_BOOKMARK_WAIT:+--wait "$VITALS_BOOKMARK_WAIT"} || true
+fi
