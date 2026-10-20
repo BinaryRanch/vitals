@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import browsers
+import icons
 
 HZ = os.sysconf("SC_CLK_TCK")
 CORES = os.cpu_count() or 1
@@ -33,6 +34,90 @@ LABELS_PATH = os.path.join(HERE, "labels.json")
 
 SAMPLE_S = 2.0
 HISTORY_N = 150          # 5 minutes at 2s
+PORT = 8791              # replaced by main(); used to recognise our own tab
+
+# What a role actually means, in words a person can act on. Shown in the
+# detail pane next to the count, because "call (WebRTC) x8" is not an answer.
+ROLE_GLOSS = {
+    "call (WebRTC)": "a page process holding a live audio/video connection. "
+                     "Idle for hours means a call that ended and never died.",
+    "tab renderer": "runs one tab's page: HTML, script, layout, and its video.",
+    "gpu": "one compositor per browser. Draws every window and tab.",
+    "main": "the browser process itself: UI, network, extensions.",
+    "utility": "a background service belonging to the browser.",
+    "video_captureservice": "holds the camera. Only exists while something captures.",
+    "audio": "the audio service: playback and mixing for the whole browser.",
+    "audioservice": "the audio service: playback and mixing for the whole browser.",
+    "network": "the browser's network service. Every request goes through it.",
+    "networkservice": "the browser's network service. Every request goes through it.",
+    "storage": "the browser's storage service.",
+    "storageservice": "the browser's storage service.",
+    "datadecoder": "parses data for the page, in a throwaway process.",
+    "app": "part of this app, and Chromium does not classify it further.",
+    "monitor": "Vitals itself, measuring this screen.",
+    "headless browser": "a browser automation instance with no window.",
+    "renderer": "a page process in a headless browser instance.",
+}
+
+
+def url_key(url):
+    """Normalise a URL so two tabs of the same page collapse into one row."""
+    try:
+        p = urlparse(url or "")
+        if not p.netloc:
+            return (url or "").strip()
+        tail = (p.path or "/") + (("?" + p.query) if p.query else "")
+        return f"{p.scheme}://{p.netloc}{tail}"
+    except ValueError:
+        return (url or "").strip()
+
+
+def merge_tabs(tabs):
+    """One row per URL. Duplicated tabs are added up, not listed twice."""
+    groups = {}
+    for t in tabs:
+        k = url_key(t.get("url", ""))
+        g = groups.get(k)
+        if g is None:
+            g = dict(t)
+            g["tab_count"] = 1
+            g["_busiest"] = t.get("task_pct") or 0
+            groups[k] = g
+        else:
+            g["tab_count"] += 1
+            g["task_pct"] = round(g.get("task_pct", 0) + (t.get("task_pct") or 0), 1)
+            g["heap_mb"] = round((g.get("heap_mb") or 0) + (t.get("heap_mb") or 0), 1)
+            g["nodes"] = int(g.get("nodes") or 0) + int(t.get("nodes") or 0)
+            # the busiest tab of the group names the row
+            if (t.get("task_pct") or 0) > g["_busiest"]:
+                g["_busiest"] = t.get("task_pct") or 0
+                g["title"] = t.get("title")
+    out = list(groups.values())
+    for g in out:
+        g.pop("_busiest", None)
+    return out
+
+
+def leak_hint(role, items):
+    """Say out loud when a group of processes looks abandoned, with the evidence.
+
+    A muted call and an abandoned call both sit at zero, so this never says
+    "safe to delete": it states the count, the age, and the condition.
+    """
+    if not items:
+        return ""
+    idle = [p for p in items if (p.get("cpu") or 0) < 0.01 and (p.get("age_h") or 0) > 0.5]
+    oldest = max((p.get("age_h") or 0) for p in items)
+    if role in ("call (WebRTC)", "tab renderer") and idle and oldest > 1.0:
+        if len(idle) == len(items):
+            return (f"all {len(items)} idle for over 30 min, oldest {oldest:.1f}h. "
+                    f"If you are not in a call, these can go.")
+        if len(idle) >= 0.5 * len(items):
+            return (f"{len(idle)} of {len(items)} idle for over 30 min, oldest {oldest:.1f}h. "
+                    f"If you are not in a call, those can go.")
+    if role == "video_captureservice" and len(idle) == len(items):
+        return "the camera is held but nothing is using it"
+    return ""
 
 
 # ---------------------------------------------------------------- labels ----
@@ -496,6 +581,7 @@ class Sampler(threading.Thread):
                                      v["cpu"] for k, v in res.get("procs", {}).items()
                                      if pid_key.get(k) == w["key"]) / 100, 2)})
             tabs.sort(key=lambda t: -t["task_pct"])
+            tabs_m = merge_tabs(tabs)
             w_cores = w["cpu"] / 100.0
             if tabs:
                 if w_cores - tab_cpu > 0.5 and tab_cpu < w_cores * 0.4:
@@ -503,7 +589,7 @@ class Sampler(threading.Thread):
                                f"{w_cores - tab_cpu:.2f} cores burned by browser internals "
                                f"(compositor / raster / media), not by a tab")
                 elif tab_cpu > 0.2:
-                    verdict = f"page work: {tab_cpu:.2f} cores across {len(tabs)} tab(s)"
+                    verdict = f"page work: {tab_cpu:.2f} cores across {len(tabs_m)} site(s)"
             else:
                 verdict = ""
             inst_detail = []
@@ -514,7 +600,7 @@ class Sampler(threading.Thread):
                     "tab": next((t["title"] for t in tabs if t.get("instance") == inst), ""),
                     "url": next((t["url"] for t in tabs if t.get("instance") == inst), ""),
                 })
-            for t in tabs:
+            for t in tabs_m:
                 tabs_flat.append({"browser": w["name"], "key": w["key"], **t})
             out.append({
                 "key": w["key"], "name": w["name"],
@@ -526,7 +612,7 @@ class Sampler(threading.Thread):
                 "instances": len(w["instances"]),
                 "roles": {k: round(v / 100, 2) for k, v in w["roles"].most_common(6) if v > 0},
                 "flags": sorted(w["flags"]),
-                "tabs": tabs[:20],
+                "tabs": tabs_m[:20],
                 "verdict": verdict,
                 "instances_detail": inst_detail,
                 "has_cdp": bool(tabs),
@@ -550,6 +636,7 @@ class Sampler(threading.Thread):
                 "workloads": out, "flags": flags, "tabs": tabs_flat[:40],
                 "browsers": sorted(browsers_seen, key=lambda b: b["port"]),
                 "brave_cdp": any(b["port"] == 9222 for b in browsers_seen),
+                "self_url": f"http://127.0.0.1:{PORT}/",
                 "self_cost": round(self.self_cost / 100, 2),
                 "sample_ms": round((time.time() - t0) * 1000),
             }
@@ -575,12 +662,34 @@ class Sampler(threading.Thread):
                 "threads": read_threads(pid, 6),
             })
         procs.sort(key=lambda p: (-p["cpu"], -p["rss_mb"]))
+        # One line per role, because eight identical "call (WebRTC)" rows with
+        # no owner is the least useful thing a monitor can print.
+        by_role = collections.defaultdict(list)
+        for p in procs:
+            by_role[p["role"]].append(p)
+        role_groups = []
+        for role, items in sorted(by_role.items(),
+                                  key=lambda kv: (-sum(i["cpu"] for i in kv[1]),
+                                                  -sum(i["rss_mb"] for i in kv[1]))):
+            ages = [i["age_h"] for i in items]
+            role_groups.append({
+                "role": role,
+                "count": len(items),
+                "cpu": round(sum(i["cpu"] for i in items), 2),
+                "rss_mb": sum(i["rss_mb"] for i in items),
+                "age_min": round(min(ages), 1),
+                "age_max": round(max(ages), 1),
+                "gloss": ROLE_GLOSS.get(role, ""),
+                "hint": leak_hint(role, items),
+                "pids": [i["pid"] for i in items],
+                "top_thread": next((i["threads"][0]["name"] for i in items if i.get("threads")), ""),
+            })
         series = []
         if hist:
             keys = [k for _, h in hist for k in h]
             if key in keys:
                 series = [round(h.get(key, 0.0), 2) for _, h in hist]
-        return {"key": key, "processes": procs, "series": series[-120:]}
+        return {"key": key, "processes": procs, "roles": role_groups, "series": series[-120:]}
 
     def run(self):
         self.refresh_containers()
@@ -651,6 +760,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(json.dumps(
                     DEMO["data"]["details"].get(key, {"key": key, "processes": [], "series": []})))
             return self._send(json.dumps(SAMPLER.detail(key)))
+        if u.path == "/api/icon":
+            target = parse_qs(u.query).get("u", [""])[0]
+            if DEMO["data"]:
+                return self._send(b"", "image/x-icon", 404)
+            got = icons.icon_for(target)
+            if not got:
+                return self._send(b"", "image/x-icon", 404)
+            data, ctype = got
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=86400")
+            self.end_headers()
+            return self.wfile.write(data)
         return self._send("not found", "text/plain", 404)
 
 
@@ -661,6 +784,8 @@ def main():
     ap.add_argument("--demo", action="store_true",
                     help="serve the canned demo snapshot (documentation, screenshots, UI work)")
     args = ap.parse_args()
+    global PORT
+    PORT = args.port
     if args.demo:
         load_demo()
         print("Vitals in DEMO mode — canned data, no /proc sampling, no CDP", flush=True)

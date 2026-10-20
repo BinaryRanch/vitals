@@ -128,6 +128,33 @@ button:hover{border-color:#37424d;color:var(--fg)}
 .row .bar i{transition:width .9s linear}
 .num{font-variant-numeric:tabular-nums}
 .stat, .legend span, .tabs .tr{will-change:auto}
+
+/* site identity in the tab list */
+.tabs .tr .t{display:flex;gap:8px;align-items:center;min-width:0}
+.tabs .tr .tt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tabs .tr .tt b{font-weight:500}
+.ico{width:16px;height:16px;flex:0 0 16px;border-radius:3px;display:inline-flex;
+  align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#0d1013;
+  overflow:hidden;background:#2a333c}
+.ico img{width:16px;height:16px;display:block}
+.badge{font-size:9.5px;border:1px solid var(--line);border-radius:2px;padding:0 4px;
+  color:var(--dim);margin-left:6px;white-space:nowrap;vertical-align:1px}
+.badge.self{border-color:#3f5c52;color:#8fd0bf}
+
+/* role groups in the detail pane */
+.role{padding:4px 0 9px;border-bottom:1px solid #1a2027}
+.role .rh{display:grid;grid-template-columns:1fr 64px 76px 78px;gap:8px;align-items:baseline}
+.role .rh .rn b{font-weight:500;font-size:11.5px}
+.role .rh .cnt{color:var(--dim2);font-size:10px;margin-left:6px;border:1px solid var(--line);
+  padding:0 4px;border-radius:2px;font-variant-numeric:tabular-nums}
+.role .gloss{color:var(--dim);font-size:11px;margin-top:3px;padding-right:8px}
+.role .hint{color:#e8c88a;font-size:11px;margin-top:3px}
+.role .pids{color:var(--dim2);font-size:9.5px;margin-top:3px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.ph.roles{grid-template-columns:1fr 64px 76px 78px}
+details.procs{margin-top:10px}
+details.procs summary{cursor:pointer;color:var(--dim2);font-size:10px;letter-spacing:.07em;
+  text-transform:uppercase;padding:4px 0}
 </style>
 </head>
 <body>
@@ -239,7 +266,7 @@ function flagChips(w){
 function render(){
   const s=state.snap; if(!s) return;
   const cores=s.cores;
-  setText($("#meta"), `live · ${new Date(s.t*1000).toLocaleTimeString()} · ${s.sample_ms}ms sample`);
+  setText($("#meta"), `live · ${new Date(s.t*1000).toLocaleTimeString()} · ${s.sample_ms}ms · this monitor ${s.self_cost.toFixed(2)} cores`);
   if(s.host) setText($("#hostlabel"), "workload map · " + s.host);
   ease.busyT = s.total_pct; ease.coresT = s.total_busy;
   setText($("#coresmax"), " / " + cores);
@@ -279,22 +306,20 @@ function render(){
   }).join(""));
   $("#flags").style.display = (s.flags||[]).length ? "flex" : "none";
 
-  // browser tabs: rebuilt only when the tab data itself changes
+  // browser tabs: one row per site, with the site's own icon. Rebuilt only
+  // when the data changes, so icons are not re-fetched every tick.
   const tabSig=JSON.stringify(s.tabs||[]);
   if(state.lastTabs!==tabSig){
     state.lastTabs=tabSig;
-    const tabRows = (s.tabs||[]).map(t=>{
-      const meta = [shortUrl(t.url)];
-      if(t.port) meta.push("port "+t.port);
-      if(t.proc_cores) meta.push(t.proc_cores+" cores in this browser");
-      if(t.instance_age) meta.push(fmtAge(t.instance_age)+" old");
-      return `<div class="tr">
-        <div class="t">${esc(t.title)}<em>${esc(meta.join("  ·  "))}</em></div>
-        <div class="b">${t.port ? "instance "+t.port : esc(t.browser)}</div>
-        <div class="num mono">${t.task_pct.toFixed(1)}%</div>
-        <div class="num dim">${t.heap_mb} MB</div>
-      </div>`;}).join("");
-    $("#tabs").innerHTML = tabRows || `<div class="empty">no tab data yet</div>`;
+    const host=$("#tabs");
+    host.innerHTML="";
+    const tabs=(s.tabs||[]).slice().sort((a,b)=>(b.task_pct||0)-(a.task_pct||0));
+    if(!tabs.length){
+      const e=document.createElement("div"); e.className="empty";
+      e.textContent = s.brave_cdp ? "no tabs reported yet" : "no tab data yet";
+      host.appendChild(e);
+    }
+    tabs.forEach(t=>host.appendChild(tabRow(t, s.self_url)));
   }
   const brave = (s.workloads||[]).find(w=>/brave/i.test(w.name) && w.cpu > 0.05);
   const banner = (!s.brave_cdp && brave) ? `<div class="banner">
@@ -434,17 +459,34 @@ function fmtRam(mb){ return mb>=1024 ? (mb/1024).toFixed(2)+" GB" : mb+" MB"; }
 
 function detailHTML(w,d){
   if(!d) return `<div class="empty">loading…</div>`;
+
   const tabBlock = (w.tabs&&w.tabs.length) ? `
     <div style="margin-bottom:14px">
-      <div class="ph" style="grid-template-columns:1fr 70px 66px;"><div>tab</div><div>page work</div><div>heap</div></div>
+      <div class="ph" style="grid-template-columns:1fr 84px 66px;"><div>site</div><div>page work</div><div>heap</div></div>
       ${w.tabs.map(t=>`<div class="pt">
-        <div class="r"><b>${esc(t.title)}</b><em>${esc(shortUrl(t.url))}</em></div>
-        <div class="num mono">${t.task_pct.toFixed(1)}%</div>
-        <div class="num dim">${t.heap_mb} MB</div></div>`).join("")}
+        <div class="r"><b>${esc(hostOf(t.url) || t.title)}</b><em>${esc(t.title)}${(t.tab_count||1)>1?`  ·  ${t.tab_count} tabs`:""}</em></div>
+        <div class="num mono">${(t.task_pct||0).toFixed(1)}%</div>
+        <div class="num dim">${t.heap_mb||0} MB</div></div>`).join("")}
       ${w.verdict?`<div class="verdict">${esc(w.verdict)}</div>`:""}
     </div>` : "";
-  if(!d.processes.length) return tabBlock+`<div class="empty">no processes seen in this sample</div>`;
-  const rows=d.processes.map(p=>{
+
+  const roles = d.roles || [];
+  const roleBlock = roles.length ? `
+    <div class="ph roles"><div>role</div><div>cores</div><div>RAM</div><div>age</div></div>
+    ${roles.map(r=>`
+      <div class="role">
+        <div class="rh">
+          <div class="rn"><b>${esc(r.role)}</b>${r.count>1?`<span class="cnt">×${r.count}</span>`:""}</div>
+          <div class="num mono">${(r.cpu||0).toFixed(2)}</div>
+          <div class="num dim">${fmtRam(r.rss_mb||0)}</div>
+          <div class="num dim">${r.count>1 ? fmtAge(r.age_max)+" max" : fmtAge(r.age_max)}</div>
+        </div>
+        ${r.gloss?`<div class="gloss">${esc(r.gloss)}</div>`:""}
+        ${r.hint?`<div class="hint">${esc(r.hint)}</div>`:""}
+        <div class="pids mono">pid ${r.pids.slice(0,12).join(" · ")}${r.pids.length>12?" …":""}</div>
+      </div>`).join("")}` : "";
+
+  const procRows = (d.processes||[]).map(p=>{
     const why=[];
     if(p.windows.length) why.push("window: "+p.windows[0]);
     if(p.ports.length) why.push("ports "+p.ports.join(","));
@@ -455,13 +497,21 @@ function detailHTML(w,d){
       <div class="num mono">${(p.cpu||0).toFixed(2)}</div>
       <div class="num dim">${fmtAge((p.age_h||0))}</div>
       <div class="num dim">${(p.threads&&p.threads[0])?p.threads[0].name.slice(0,10):"—"}</div>
-      <div class="num dim">${p.threads&&p.threads[0]?p.threads[0].ticks>0?Math.round(p.threads[0].ticks/100)+"s":"":"—"}</div>
+      <div class="num dim">${p.threads&&p.threads[0]?p.threads[0].ticks>0?Math.round(p.threads[0].ticks/100)+"s":"":""}</div>
       <div class="why">${esc(why.join("  ·  "))}</div>
     </div>`;
   }).join("");
-  return tabBlock+`<div class="dgrid"><div class="dlist">
-      <div class="ph"><div>process / role</div><div>cores</div><div>age</div><div>hot thread</div><div>cpu</div></div>
-      ${rows}</div>
+
+  const procTable = procRows ? `
+    <details class="procs"><summary>${d.processes.length} individual processes</summary>
+      <div class="dlist">
+        <div class="ph"><div>process / role</div><div>cores</div><div>age</div><div>hot thread</div><div>cpu</div></div>
+        ${procRows}
+      </div></details>` : "";
+
+  return tabBlock + `<div class="dgrid"><div class="dlist">
+      ${roleBlock || `<div class="empty">no processes seen in this sample</div>`}
+      ${procTable}</div>
     <div class="chart"><div class="cap">last 5 minutes · cores</div>
       ${bigChart(d.series, colorFor(w.key))}</div></div>`;
 }
@@ -469,6 +519,54 @@ function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">
 function shortUrl(u){
   try{ const x=new URL(u); return x.hostname.replace(/^www\./,"")+x.pathname.slice(0,40); }
   catch(e){ return (u||"").slice(0,50); }
+}
+function hostOf(u){
+  try{ return new URL(u).hostname.replace(/^www\./,""); }catch(e){ return ""; }
+}
+/* The icon comes from the site itself through the local server, cached on disk.
+   If the site has none, a letter tile in the site's own colour stands in. */
+function iconEl(url, host){
+  const box=document.createElement("span");
+  box.className="ico";
+  const img=document.createElement("img");
+  img.alt=""; img.loading="lazy"; img.decoding="async";
+  img.src="/api/icon?u="+encodeURIComponent(url||"");
+  img.onerror=()=>{
+    img.remove();
+    box.textContent=(host||"?").slice(0,1).toUpperCase();
+    box.style.background=colorFor(host||"?");
+  };
+  box.appendChild(img);
+  return box;
+}
+function tabRow(t, selfUrl){
+  const row=document.createElement("div"); row.className="tr";
+  const host=hostOf(t.url);
+
+  const cell=document.createElement("div"); cell.className="t";
+  cell.appendChild(iconEl(t.url, host));
+  const txt=document.createElement("div"); txt.className="tt";
+  const name=document.createElement("b"); name.textContent=host || t.title || t.url || "(untitled)";
+  txt.appendChild(name);
+  if((t.tab_count||1)>1){
+    const b=document.createElement("span"); b.className="badge"; b.textContent="×"+t.tab_count; txt.appendChild(b);
+  }
+  if(selfUrl && (t.url||"").startsWith(selfUrl)){
+    const b=document.createElement("span"); b.className="badge self"; b.textContent="this screen"; txt.appendChild(b);
+  }
+  const em=document.createElement("em"); em.textContent=t.title || ""; txt.appendChild(em);
+  cell.appendChild(txt); row.appendChild(cell);
+
+  const bcell=document.createElement("div"); bcell.className="b";
+  bcell.textContent = t.port ? "instance "+t.port : (t.browser||"");
+  row.appendChild(bcell);
+
+  const pct=document.createElement("div"); pct.className="num mono";
+  pct.textContent=((t.task_pct||0)).toFixed(1)+"%"; row.appendChild(pct);
+
+  const heap=document.createElement("div"); heap.className="num dim";
+  heap.textContent=((t.heap_mb||0))+" MB"; row.appendChild(heap);
+  return row;
 }
 function bigChart(series,color){
   const w=284,h=120;
