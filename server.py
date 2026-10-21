@@ -744,6 +744,19 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(f.read(), "text/html; charset=utf-8")
             except OSError:
                 return self._send("index.html missing", "text/plain", 500)
+        if u.path == "/favicon.ico":
+            path = os.path.join(HERE, "icons", "favicon.ico")
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    return self._send(f.read(), "image/x-icon")
+            return self._send("no icon yet", "text/plain", 404)
+        if u.path.startswith("/icons/"):
+            name = os.path.basename(u.path)          # never trust the path
+            path = os.path.join(HERE, "icons", name)
+            if name.endswith(".png") and os.path.exists(path):
+                with open(path, "rb") as f:
+                    return self._send(f.read(), "image/png")
+            return self._send("no icon yet", "text/plain", 404)
         if u.path == "/api/snapshot":
             if DEMO["data"]:
                 snap = dict(DEMO["data"]["snapshot"])
