@@ -73,8 +73,7 @@ cd vitals
 python3 server.py            # http://127.0.0.1:8791
 ```
 
-Canonical development happens on [Binary Ranch's own forge](https://forge.binaryranch.com/binaryranch-labs/vitals);
-GitHub is the public mirror. Either clone works, commits land in both.
+Canonical development happens in [Bunkhouse](https://forge.binaryranch.com/bunkhouse/vitals), Binary Ranch's own forge for work built with the community. GitHub is the public mirror. Either clone works, commits land in both.
 
 Optional: run it as a user service so it is either up or reported, never a
 silently orphaned process.
