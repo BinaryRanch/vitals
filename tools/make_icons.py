@@ -61,21 +61,29 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("source", help="square-ish .svg or .png/.jpg mark")
     ap.add_argument("--out-dir", default="icons")
+    ap.add_argument("--small-from", default="",
+                    help="optional simpler source used for 16/32/48 and the .ico, "
+                         "because fine detail dies at tab size")
+    ap.add_argument("--small-max", type=int, default=48)
     args = ap.parse_args()
 
     if not os.path.exists(args.source):
         sys.exit(f"no such file: {args.source}")
 
     master = load_square(args.source)
+    small = load_square(args.small_from) if args.small_from else None
     os.makedirs(args.out_dir, exist_ok=True)
     for size in SIZES:
+        src = small if (small and size <= args.small_max) else master
         out = os.path.join(args.out_dir, f"icon-{size}.png")
-        master.resize((size, size), RESAMPLE).save(out)
-        print(f"  {out}")
+        src.resize((size, size), RESAMPLE).save(out)
+        print(f"  {out}{'  (simplified)' if src is small else ''}")
 
     ico_path = os.path.join(args.out_dir, "favicon.ico")
-    master.resize((256, 256), RESAMPLE).save(ico_path, sizes=[(s, s) for s in ICO_SIZES])
-    print(f"  {ico_path}  ({', '.join(str(s) for s in ICO_SIZES)})")
+    (small or master).resize((256, 256), RESAMPLE).save(
+        ico_path, sizes=[(s, s) for s in ICO_SIZES])
+    print(f"  {ico_path}  ({', '.join(str(s) for s in ICO_SIZES)})"
+          f"{'  (simplified)' if small else ''}")
 
     print(f"\n{len(SIZES) + 1} files in {args.out_dir}/")
     print("upload icon-512.png as the org avatar on both forges; the rest ship with the app")
